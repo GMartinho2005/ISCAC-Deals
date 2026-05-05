@@ -3,7 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Image, InteractionManager, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Image, InteractionManager, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { AuthService } from '../src/services/auth';
 import {
@@ -26,7 +26,6 @@ export default function NovaPublicacaoScreen() {
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [categories, setCategories] = useState<Categoria[]>([]);
 
-  // Estado para a fotografia
   const [imageUri, setImageUri] = useState<string | null>(null);
   
   const [title, setTitle] = useState('');
@@ -43,6 +42,32 @@ export default function NovaPublicacaoScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [tempDate, setTempDate] = useState<Date>(new Date());
+
+  // ESTADO DOS MODAIS CUSTOMIZADOS
+  const [photoSelectionModalVisible, setPhotoSelectionModalVisible] = useState(false);
+
+  const [alertState, setAlertState] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'warning' as 'success' | 'error' | 'warning',
+    onConfirm: null as (() => void) | null
+  });
+
+  const showAlert = (title: string, message: string, type: 'warning' | 'success' | 'error' = 'warning', onConfirm: (() => void) | null = null) => {
+    setAlertState({ visible: true, title, message, type, onConfirm });
+  };
+
+  const closeAlert = () => {
+    const onConfirm = alertState.onConfirm;
+    setAlertState(prev => ({ ...prev, visible: false, onConfirm: null }));
+    if (onConfirm) onConfirm();
+  };
+
+  // A FUNÇÃO QUE FALTAVA!
+  const handleConfirmAlert = () => {
+    closeAlert();
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -92,7 +117,7 @@ export default function NovaPublicacaoScreen() {
             setPrice(ad.preco.replace('€/h', '').replace('€', '').trim());
             setDescription(ad.descricao || '');
             
-            if (ad.foto) setImageUri(ad.foto.startsWith('file://') ? ad.foto : `https://teu-servidor.com/media/${ad.foto}`);
+            if (ad.foto) setImageUri(ad.foto.startsWith('file://') || ad.foto.startsWith('http') ? ad.foto : `https://teu-servidor.com/media/${ad.foto}`);
 
             if (isServ) {
               setFormat(ad.formato || '');
@@ -131,29 +156,15 @@ export default function NovaPublicacaoScreen() {
     }, [editId, isEditing, editType])
   );
 
-  // ==========================================
-  // LÓGICA DA CÂMARA E GALERIA
-  // ==========================================
-  const handleImageSelection = () => {
-    Alert.alert(
-      "Adicionar Fotografia",
-      "De onde queres carregar a imagem?",
-      [
-        { text: "Tirar Foto", onPress: takePhoto },
-        { text: "Escolher da Galeria", onPress: pickFromGallery },
-        { text: "Cancelar", style: "cancel" }
-      ]
-    );
-  };
-
   const pickFromGallery = async () => {
+    setPhotoSelectionModalVisible(false);
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (permissionResult.granted === false) {
-      Alert.alert("Permissão Recusada", "Precisamos de acesso à tua galeria para adicionares uma foto!");
+      showAlert("Permissão Recusada", "Precisamos de acesso à tua galeria para adicionares uma foto!", "error");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
       quality: 0.8,
@@ -164,9 +175,10 @@ export default function NovaPublicacaoScreen() {
   };
 
   const takePhoto = async () => {
+    setPhotoSelectionModalVisible(false);
     const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
     if (permissionResult.granted === false) {
-      Alert.alert("Permissão Recusada", "Precisamos de acesso à tua câmara para tirares uma foto!");
+      showAlert("Permissão Recusada", "Precisamos de acesso à tua câmara para tirares uma foto!", "error");
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -178,7 +190,10 @@ export default function NovaPublicacaoScreen() {
       setImageUri(result.assets[0].uri);
     }
   };
-  // ==========================================
+
+  const handleImageSelection = () => {
+    setPhotoSelectionModalVisible(true);
+  };
 
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(false);
@@ -199,20 +214,26 @@ export default function NovaPublicacaoScreen() {
 
   const handlePublicar = async () => {
     if (!selectedCategory || !title.trim() || !price.trim() || !description.trim()) {
-      Alert.alert('Campos Incompletos', 'Por favor, preenche todos os campos textuais.');
+      showAlert('Campos Incompletos', 'Por favor, preenche todos os campos textuais.', "warning");
+      return;
+    }
+
+    // VERIFICAÇÃO OBRIGATÓRIA DA FOTO AQUI
+    if (!imageUri) {
+      showAlert('Fotografia Obrigatória', 'Tens de adicionar pelo menos uma fotografia ao teu anúncio para o poderes publicar.', "warning");
       return;
     }
 
     if (isService) {
-      if (!format) return Alert.alert('Campos Incompletos', 'Por favor, escolhe o formato do serviço.');
-      if (slots.length === 0) return Alert.alert('Campos Incompletos', 'Adiciona pelo menos um horário.');
+      if (!format) return showAlert('Campos Incompletos', 'Por favor, escolhe o formato do serviço.', "warning");
+      if (slots.length === 0) return showAlert('Campos Incompletos', 'Adiciona pelo menos um horário.', "warning");
     } else {
-      if (!condition) return Alert.alert('Campos Incompletos', 'Escolhe o estado do produto.');
-      if (!deliveryLocation.trim()) return Alert.alert('Campos Incompletos', 'Indica o local de entrega.');
+      if (!condition) return showAlert('Campos Incompletos', 'Escolhe o estado do produto.', "warning");
+      if (!deliveryLocation.trim()) return showAlert('Campos Incompletos', 'Indica o local de entrega.', "warning");
     }
 
     if (!currentUserId) {
-      Alert.alert('Erro de Sessão', 'Faz login novamente.');
+      showAlert('Erro de Sessão', 'Faz login novamente.', "error");
       return;
     }
 
@@ -233,19 +254,18 @@ export default function NovaPublicacaoScreen() {
         } else {
           await updateProduto(editId, title.trim(), finalPrice, fotoDb, selectedCategory, descDb, condDb, locDb);
         }
-        Alert.alert('Sucesso', 'Publicação atualizada!');
+        showAlert('Sucesso', 'Publicação atualizada!', "success", () => router.back());
       } else {
         if (isService) {
           await insertServico(currentUserId, title.trim(), finalPrice, fotoDb, selectedCategory, descDb, formatDb, slotsDb);
         } else {
           await insertProduto(currentUserId, title.trim(), finalPrice, fotoDb, selectedCategory, descDb, condDb, locDb);
         }
-        Alert.alert('Sucesso', 'Publicação criada com sucesso!');
+        showAlert('Sucesso', 'Publicação criada com sucesso!', "success", () => router.back());
       }
-      router.back();
     } catch (error: any) {
       console.error('Erro ao publicar:', error.message);
-      Alert.alert('Erro', 'Não foi possível guardar a publicação.');
+      showAlert('Erro', 'Não foi possível guardar a publicação.', "error");
     }
   };
 
@@ -290,7 +310,6 @@ export default function NovaPublicacaoScreen() {
           {selectedCategory && (
             <View className="pt-6 border-t border-white/10 mt-2">
 
-              {/* FOTOGRAFIA DO ANÚNCIO */}
               <View className="mb-8 items-center">
                 <Pressable 
                   onPress={handleImageSelection} 
@@ -302,7 +321,7 @@ export default function NovaPublicacaoScreen() {
                     <View className="items-center">
                       <Ionicons name="camera-outline" size={40} color="rgba(255,255,255,0.5)" />
                       <Text className="text-gray-400 font-bold mt-2 text-[15px]">Adicionar Fotografia</Text>
-                      <Text className="text-gray-500 text-[12px] mt-1">Tirar foto ou escolher da galeria</Text>
+                      <Text className="text-gray-500 text-[12px] mt-1">Carregar da galeria</Text>
                     </View>
                   )}
                 </Pressable>
@@ -356,7 +375,7 @@ export default function NovaPublicacaoScreen() {
 
                   <View className="mb-6">
                     <View className="flex-row justify-between items-center mb-2 px-1">
-                      <Text className="text-white font-bold text-[15px]">Disponibilidade</Text>
+                      <Text className="text-white font-bold text-[15px]">Disponibilidade (1h)</Text>
                       <Pressable onPress={() => setShowDatePicker(true)} className="bg-[rgb(223,19,36)] px-3 py-1.5 rounded-lg flex-row items-center">
                         <Ionicons name="add" size={16} color="white" />
                         <Text className="text-white font-bold text-[12px] ml-1">Adicionar Horário</Text>
@@ -372,7 +391,9 @@ export default function NovaPublicacaoScreen() {
                               <Ionicons name="calendar-outline" size={18} color="white" />
                               <Text className="text-white font-medium mx-3">{slot.date.toLocaleDateString('pt-PT')}</Text>
                               <Ionicons name="time-outline" size={18} color="white" />
-                              <Text className="text-white font-medium ml-2">{slot.time.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}</Text>
+                              <Text className="text-white font-medium ml-2">
+                                {slot.time.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })} - {new Date(slot.time.getTime() + 60 * 60 * 1000).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                              </Text>
                             </View>
                             <Pressable onPress={() => removeSlot(slot.id)} className="p-1">
                               <Ionicons name="trash-outline" size={20} color="#ff4444" />
@@ -444,6 +465,68 @@ export default function NovaPublicacaoScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {/* MODAL SELEÇÃO IMAGEM */}
+      <Modal animationType="slide" transparent visible={photoSelectionModalVisible} onRequestClose={() => setPhotoSelectionModalVisible(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} onPress={() => setPhotoSelectionModalVisible(false)}>
+          <Pressable className="bg-[rgb(48,66,77)] rounded-t-3xl px-6 pt-3 pb-8" onPress={(e) => e.stopPropagation()}>
+            <View className="w-12 h-1.5 bg-white/20 rounded-full self-center mb-6 mt-1" />
+
+            <Pressable className="flex-row items-center py-4 border-b border-white/5 active:opacity-50" onPress={takePhoto}>
+              <Ionicons name="camera-outline" size={24} color="white" />
+              <Text className="text-white text-[16px] font-medium ml-4">Tirar Foto</Text>
+            </Pressable>
+
+            <Pressable className="flex-row items-center py-4 border-b border-white/5 active:opacity-50" onPress={pickFromGallery}>
+              <Ionicons name="images-outline" size={24} color="white" />
+              <Text className="text-white text-[16px] font-medium ml-4">Escolher da Galeria</Text>
+            </Pressable>
+
+            <Pressable className="flex-row items-center py-4 mt-2 active:opacity-50" onPress={() => setPhotoSelectionModalVisible(false)}>
+              <Ionicons name="close-circle-outline" size={24} color="rgba(255,255,255,0.5)" />
+              <Text className="text-white/50 text-[16px] font-medium ml-4">Cancelar</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* MODAL ALERTA CUSTOMIZADO */}
+      <Modal animationType="fade" transparent visible={alertState.visible} onRequestClose={closeAlert}>
+        <View className="flex-1 justify-center items-center bg-black/70 px-6">
+          <View className="bg-[rgb(48,66,77)] w-full rounded-3xl p-6 items-center shadow-2xl border border-white/10">
+            
+            <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${
+              alertState.type === 'success' ? 'bg-[#10b981]/20' : 
+              alertState.type === 'error' ? 'bg-[rgb(223,19,36)]/20' : 'bg-[#fbbf24]/20'
+            }`}>
+              <Ionicons 
+                name={
+                  alertState.type === 'success' ? 'checkmark-circle' : 
+                  alertState.type === 'error' ? 'close-circle' : 'warning'
+                } 
+                size={36} 
+                color={
+                  alertState.type === 'success' ? '#10b981' : 
+                  alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
+                } 
+              />
+            </View>
+
+            <Text className="text-white text-xl font-bold text-center mb-2">{alertState.title}</Text>
+            <Text className="text-gray-300 text-[15px] text-center leading-6 mb-8">{alertState.message}</Text>
+            
+            <TouchableOpacity 
+              onPress={handleConfirmAlert}
+              activeOpacity={0.8}
+              className="bg-[rgb(223,19,36)] w-full h-[50px] rounded-xl justify-center items-center"
+            >
+              <Text className="text-white font-bold text-[16px]">Entendido</Text>
+            </TouchableOpacity>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }

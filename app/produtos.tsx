@@ -3,49 +3,98 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Pressable, ScrollView, Text, View } from 'react-native';
 
+import { useCart } from '../src/contexts/CartContext';
 import { AuthService } from '../src/services/auth';
-import { AnuncioRow, getOutrosProdutosByUser, getProdutoById, ProdutoDetalhe } from '../src/services/database';
+import {
+  AnuncioRow,
+  getOuCriarConversa,
+  getOutrosAnunciosByUser,
+  getProdutoById,
+  isFavorito,
+  ProdutoDetalhe,
+  toggleFavorito,
+} from '../src/services/database';
 
 const ImageMap: Record<string, any> = {
   'produtos/constituição_da_repu.png': require('../assets/images/constituição_da_repu.png'),
 };
-
 const DEFAULT_IMAGE = require('../assets/images/logo.png');
 
 export default function ProdutosScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const id = params.id ? Number(params.id) : null;
+  const isPurchased = params.isPurchased === 'true';
 
   const [produto, setProduto] = useState<ProdutoDetalhe | null>(null);
   const [outros, setOutros] = useState<AnuncioRow[]>([]);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [favorito, setFavorito] = useState(false);
+  const [toastInfo, setToastInfo] = useState<{ message: string; type: 'cart' | 'fav_add' | 'fav_remove' } | null>(null);
+
+  const { addToCart, isInCart } = useCart();
 
   useEffect(() => {
     const load = async () => {
       if (!id) return;
-      
       const user = await AuthService.getCurrentUser();
       setCurrentUserId(user?.id || null);
-
       const data = await getProdutoById(id);
       setProduto(data);
       if (data) {
-        const maisAnuncios = await getOutrosProdutosByUser(data.id_utilizador, id);
+        const maisAnuncios = await getOutrosAnunciosByUser(data.id_utilizador, id, 'produto');
         setOutros(maisAnuncios);
+      }
+      if (user?.id) {
+        const fav = await isFavorito(user.id, id, false);
+        setFavorito(fav);
       }
     };
     load();
   }, [id]);
 
+  const handleToggleFavorito = async () => {
+    if (!currentUserId || !id) return;
+    const novoEstado = await toggleFavorito(currentUserId, id, false);
+    setFavorito(novoEstado);
+    setToastInfo({ message: novoEstado ? 'Adicionado aos favoritos!' : 'Removido dos favoritos!', type: novoEstado ? 'fav_add' : 'fav_remove' });
+    setTimeout(() => setToastInfo(null), 2000);
+  };
+
+  const handleContactar = async () => {
+    if (!currentUserId || !produto) return;
+
+    if (currentUserId === produto.id_utilizador) {
+      Alert.alert('Aviso', 'Não podes contactar-te a ti próprio.');
+      return;
+    }
+
+    const conversaId = await getOuCriarConversa(
+      currentUserId,
+      produto.id_utilizador,
+      produto.id,
+      false
+    );
+
+    if (!conversaId) {
+      Alert.alert('Erro', 'Não foi possível iniciar a conversa.');
+      return;
+    }
+
+    router.push({
+      pathname: '/conversa',
+      params: {
+        conversaId,
+        nomeOutro: produto.nome_vendedor,
+        tituloAnuncio: produto.titulo,
+      },
+    });
+  };
+
   const getDynamicImage = (imgPath: string | null) => {
     if (!imgPath) return DEFAULT_IMAGE;
-    if (imgPath.startsWith('file://') || imgPath.startsWith('http')) {
-      return { uri: imgPath };
-    }
-    if (ImageMap[imgPath]) {
-      return ImageMap[imgPath];
-    }
+    if (imgPath.startsWith('file://') || imgPath.startsWith('http')) return { uri: imgPath };
+    if (ImageMap[imgPath]) return ImageMap[imgPath];
     return DEFAULT_IMAGE;
   };
 
@@ -58,39 +107,59 @@ export default function ProdutosScreen() {
   }
 
   const isMyAd = currentUserId === produto.id_utilizador;
-  
-  // Limpa qualquer '€' que venha da base de dados para formatar uniformemente
   const displayPrice = produto.preco ? produto.preco.replace('€', '').trim() : '0';
+  const isItemInCart = isInCart(produto.id, 'produto');
+
+  const handleCartClick = () => {
+    addToCart({ id: produto.id, type: 'produto', title: produto.titulo, price: displayPrice, img: produto.foto, vendedor: produto.nome_vendedor, sellerId: produto.id_utilizador });
+    setToastInfo({ message: 'Produto adicionado ao carrinho.\nClique aqui para ir para o carrinho.', type: 'cart' });
+    setTimeout(() => setToastInfo(null), 4000);
+  };
 
   return (
     <View className="flex-1 bg-[rgb(58,79,92)]">
-      <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      {toastInfo && (
+        <View className="absolute top-16 w-full px-4 z-50">
+          {toastInfo.type === 'cart' ? (
+            <Pressable
+              onPress={() => { setToastInfo(null); router.push('/cart'); }}
+              className="bg-[#10b981] flex-row items-center p-4 rounded-2xl shadow-xl border border-white/20 active:opacity-80"
+            >
+              <Ionicons name="cart" size={26} color="white" />
+              <Text className="text-white font-bold ml-3 text-[14px] flex-1 leading-5">{toastInfo.message}</Text>
+              <Ionicons name="chevron-forward" size={20} color="white" />
+            </Pressable>
+          ) : (
+            <View className={`flex-row items-center justify-center p-4 rounded-2xl shadow-xl border border-white/20 ${toastInfo.type === 'fav_add' ? 'bg-[#10b981]' : 'bg-[rgb(223,19,36)]'}`}>
+              <Ionicons name={toastInfo.type === 'fav_add' ? 'checkmark-circle' : 'trash'} size={22} color="white" />
+              <Text className="text-white font-bold ml-2 text-[15px]">{toastInfo.message}</Text>
+            </View>
+          )}
+        </View>
+      )}
 
+      <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
         <View className="w-full h-[300px] relative pt-12 pb-4">
-          
           <View className="absolute top-14 left-4 right-4 flex-row justify-between items-center z-10">
             <Pressable onPress={() => router.back()} className="bg-black/40 p-3 rounded-full active:opacity-70 border border-white/10">
               <Ionicons name="arrow-back" size={24} color="white" />
             </Pressable>
-            
-            {!isMyAd && (
-              <Pressable className="bg-black/40 p-3 rounded-full active:opacity-70 border border-white/10">
-                <Ionicons name="heart-outline" size={24} color="white" />
+            {!isMyAd && !isPurchased && (
+              <Pressable onPress={handleToggleFavorito} className="bg-black/40 p-3 rounded-full active:opacity-70 border border-white/10">
+                <Ionicons name={favorito ? 'heart' : 'heart-outline'} size={24} color={favorito ? 'rgb(223,19,36)' : 'white'} />
               </Pressable>
             )}
           </View>
-          
           <Image source={getDynamicImage(produto.foto)} className="w-full h-full" resizeMode="contain" />
         </View>
 
         <View className="px-5 pt-4 pb-8">
-
           <View className="flex-row items-center mb-4">
             <View className="bg-white/10 px-3 py-1.5 rounded-lg border border-white/20 mr-3">
               <Text className="text-white text-[12px] font-extrabold uppercase tracking-wider">{produto.estado}</Text>
             </View>
             <Text className="text-gray-300 font-medium flex-1 text-[14px]">
-              Vendido por <Text className="font-bold text-white">{produto.nome_vendedor} {isMyAd && '(Tu)'}</Text>
+              Vendido por <Text className="font-bold text-white">{produto.nome_vendedor}{isMyAd ? ' (Tu)' : ''}</Text>
             </Text>
           </View>
 
@@ -112,15 +181,16 @@ export default function ProdutosScreen() {
 
           {outros.length > 0 && (
             <>
-              <Text className="text-white text-xl font-bold mb-4">Mais anúncios de {produto.nome_vendedor} {isMyAd && '(Tu)'}</Text>
+              <Text className="text-white text-xl font-bold mb-4">
+                Mais anúncios de {produto.nome_vendedor}{isMyAd ? ' (Tu)' : ''}
+              </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} className="overflow-visible mb-10">
                 {outros.map((item) => {
-                  // Limpa os preços dos outros anúncios também
-                  const cleanItemPrice = item.price ? item.price.replace('€', '').trim() : '0';
+                  const cleanItemPrice = item.price ? item.price.replace('€/h', '').replace('€', '').trim() : '0';
                   return (
                     <Pressable
-                      key={item.id}
-                      onPress={() => router.push({ pathname: '/produtos', params: { id: item.id } })}
+                      key={`${item.type}-${item.id}`}
+                      onPress={() => router.push({ pathname: item.type === 'servico' ? '/servicos' : '/produtos', params: { id: item.id } })}
                       className="w-40 mr-4 pb-3 active:opacity-80"
                     >
                       <View className="w-full h-32 mb-3 bg-black/20 rounded-xl overflow-hidden border border-white/5">
@@ -128,7 +198,9 @@ export default function ProdutosScreen() {
                       </View>
                       <View className="px-1">
                         <Text className="text-white font-bold text-[14px]" numberOfLines={2}>{item.title}</Text>
-                        <Text className="text-white font-black text-[16px] mt-1">{cleanItemPrice}€</Text>
+                        <Text className="text-white font-black text-[16px] mt-1">
+                          {cleanItemPrice}€{item.type === 'servico' && <Text className="text-[12px] font-normal text-gray-400">/h</Text>}
+                        </Text>
                       </View>
                     </Pressable>
                   );
@@ -139,18 +211,20 @@ export default function ProdutosScreen() {
         </View>
       </ScrollView>
 
-      {!isMyAd && (
+      {!isMyAd && !isPurchased && (
         <View className="px-5 pt-4 pb-12 border-t border-white/10 bg-[rgb(58,79,92)] flex-row gap-3">
+          {!isItemInCart && (
+            <Pressable
+              onPress={handleCartClick}
+              className="flex-1 bg-white/10 py-4 rounded-xl items-center flex-row justify-center active:bg-white/20 border border-white/10"
+            >
+              <Ionicons name="cart-outline" size={20} color="white" />
+              <Text className="text-white font-bold ml-2 text-[16px]">Carrinho</Text>
+            </Pressable>
+          )}
           <Pressable
-            onPress={() => Alert.alert('Sucesso', 'Produto adicionado ao carrinho!')}
-            className="flex-1 bg-white/10 py-4 rounded-xl items-center flex-row justify-center active:bg-white/20 border border-white/10"
-          >
-            <Ionicons name="cart-outline" size={20} color="white" />
-            <Text className="text-white font-bold ml-2 text-[16px]">Carrinho</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => router.push('/chat')}
-            className="flex-1 bg-black py-4 rounded-xl items-center flex-row justify-center active:bg-gray-800 shadow-md"
+            onPress={handleContactar}
+            className="flex-1 bg-black py-4 rounded-xl items-center flex-row justify-center active:bg-gray-800"
           >
             <Ionicons name="chatbubbles-outline" size={20} color="white" />
             <Text className="text-white font-bold ml-2 text-[16px]">Contactar</Text>

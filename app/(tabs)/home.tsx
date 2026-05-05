@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useRef, useState } from 'react';
-import { Alert, BackHandler, Image, Keyboard, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { setupDatabase } from '../../src/services/database';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { BackHandler, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AuthService } from '../../src/services/auth';
+import { getAllAnuncios, getCategorias, getDestaques } from '../../src/services/database';
 
 type Categoria = {
   id: number;
@@ -33,82 +34,123 @@ const DEFAULT_IMAGE = require('../../assets/images/logo.png');
 
 export default function HomePage() {
   const router = useRouter();
+  const navigation = useNavigation();
 
   const [categories, setCategories] = useState<Categoria[]>([]);
   const [anuncios, setAnuncios] = useState<AnuncioItem[]>([]);
+  const [destaques, setDestaques] = useState<AnuncioItem[]>([]);
 
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('Tudo');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
+  const mainScrollRef = useRef<ScrollView>(null);
   const categoriesScrollRef = useRef<ScrollView>(null);
-  const destaquesScrollRef = useRef<ScrollView>(null);
 
+  const [alertState, setAlertState] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'warning' as 'success' | 'error' | 'warning',
+    showCancel: false,
+    confirmText: 'Entendido',
+    onConfirm: null as (() => void) | null
+  });
+
+  const showAlert = (title: string, message: string, type: 'warning' | 'success' | 'error', showCancel = false, confirmText = 'Entendido', onConfirm: (() => void) | null = null) => {
+    setAlertState({ visible: true, title, message, type, showCancel, confirmText, onConfirm });
+  };
+
+  const closeAlert = () => {
+    setAlertState(prev => ({ ...prev, visible: false }));
+  };
+
+  const handleConfirmAlert = () => {
+    const onConfirm = alertState.onConfirm;
+    closeAlert();
+    if (onConfirm) onConfirm();
+  };
+
+  const handleCancelSearch = useCallback(() => {
+    setIsSearchActive(false);
+    setSearchQuery('');
+    setActiveFilter('Tudo');
+    Keyboard.dismiss();
+  }, []);
+
+  // OUVINTE DO CLIQUE NA TAB HOME
+  useEffect(() => {
+    const unsubscribe = (navigation as any).addListener('tabPress', (e: any) => {
+      if (isSearchActive) {
+        handleCancelSearch();
+      } else {
+        categoriesScrollRef.current?.scrollTo({ x: 0, animated: true });
+        mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, isSearchActive, handleCancelSearch]);
+
+  // CARREGAR DADOS
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
 
-      categoriesScrollRef.current?.scrollTo({ x: 0, animated: false });
-      destaquesScrollRef.current?.scrollTo({ x: 0, animated: false });
-
       const loadData = async () => {
         try {
-          const db = await setupDatabase();
-          if (!db || !isActive) return;
+          const user = await AuthService.getCurrentUser();
+          const userId = user?.id || null;
 
-          const dbCategories = await db.getAllAsync<Categoria>(
-            'SELECT id, nome, imagem FROM core_categoria ORDER BY nome'
-          );
+          const cats = await getCategorias();
           if (!isActive) return;
-          setCategories(dbCategories);
+          setCategories(cats);
 
-          const produtos = await db.getAllAsync<AnuncioItem>(
-            `SELECT id, 'produto' as type, titulo as title, preco as price, foto as img
-             FROM core_produto WHERE ativo = 1 ORDER BY id DESC`
-          );
-
-          const servicos = await db.getAllAsync<AnuncioItem>(
-            `SELECT id, 'servico' as type, titulo as title, preco as price, foto as img
-             FROM core_servico WHERE ativo = 1 ORDER BY id DESC`
-          );
-
+          const allItems = await getAllAnuncios(userId);
           if (!isActive) return;
-          setAnuncios([...produtos, ...servicos]);
+          setAnuncios(allItems);
+
+          // Agora pede 6 destaques em vez de 5
+          const topItems = await getDestaques(userId, 6);
+          if (!isActive) return;
+          setDestaques(topItems);
         } catch (error) {
-          console.error("Erro ao carregar dados da BD:", error);
+          console.error("Erro ao carregar dados:", error);
         }
       };
-
+      
       loadData();
 
+      return () => {
+        isActive = false;
+      };
+    }, []) 
+  );
+
+  // CONTROLAR O BOTÃO DE VOLTAR DO ANDROID
+  useFocusEffect(
+    useCallback(() => {
       const onBackPress = () => {
         if (isSearchActive) {
-          setIsSearchActive(false);
-          setSearchQuery('');
-          setActiveFilter('Tudo');
-          Keyboard.dismiss();
-          return true;
+          handleCancelSearch();
+          return true; 
         }
         
-        Alert.alert(
+        showAlert(
           "Sair da Aplicação",
           "Tens a certeza que pretendes sair do ISCAC Deals?",
-          [
-            { text: "Cancelar", style: "cancel" },
-            { text: "Sair", onPress: () => BackHandler.exitApp() }
-          ]
+          "warning",
+          true,
+          "Sair",
+          () => BackHandler.exitApp()
         );
         return true; 
       };
 
       const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      
-      return () => {
-        isActive = false;
-        backHandler.remove();
-      };
-    }, [isSearchActive])
+      return () => backHandler.remove();
+    }, [isSearchActive, handleCancelSearch])
   );
 
   const handleSearchSubmit = () => {
@@ -120,13 +162,6 @@ export default function HomePage() {
         return [searchQuery.trim(), ...filtered].slice(0, 5);
       });
     }
-  };
-
-  const handleCancelSearch = () => {
-    setIsSearchActive(false);
-    setSearchQuery('');
-    setActiveFilter('Tudo');
-    Keyboard.dismiss();
   };
 
   const handlePressItem = (item: AnuncioItem) => {
@@ -192,10 +227,9 @@ export default function HomePage() {
         )}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      <ScrollView ref={mainScrollRef} showsVerticalScrollIndicator={false} className="flex-1">
         {!isSearchActive && (
           <>
-            {/* Banner */}
             <View className="w-full h-40 rounded-2xl overflow-hidden mb-8 relative bg-gray-200">
               <Image
                 source={require('../../assets/images/iscac.png')}
@@ -211,7 +245,6 @@ export default function HomePage() {
               </Text>
             </View>
 
-            {/* Categorias */}
             <Text className="text-xl font-bold text-white mb-4">Categorias</Text>
             <ScrollView 
               horizontal 
@@ -241,33 +274,20 @@ export default function HomePage() {
               ))}
             </ScrollView>
 
-            {/* Destaques */}
-            <Pressable
-              onPress={() => router.push('/destaques')}
-              className="flex-row justify-between items-center mb-4 active:opacity-70"
-            >
-              <Text className="text-xl font-bold text-white">Destaques</Text>
-              <View className="p-2 -mr-2">
-                <Ionicons name="chevron-forward" size={20} color="white" />
-              </View>
-            </Pressable>
+            <Text className="text-xl font-bold text-white mb-4">Destaques</Text>
 
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              className="mb-10"
-              ref={destaquesScrollRef}
-            >
-              {anuncios.map((item) => {
+            {/* Grelha Vertical de Destaques (2 Colunas x 3 Linhas = 6 itens) */}
+            <View className="flex-row flex-wrap justify-between">
+              {destaques.map((item) => {
                 const cleanPrice = item.price ? item.price.replace('€/h', '').replace('€', '').trim() : '0';
                 
                 return (
                   <Pressable
                     key={`${item.type}-${item.id}`}
-                    className="w-[130px] mr-4"
+                    className="w-[48%] mb-6"
                     onPress={() => handlePressItem(item)}
                   >
-                    <View className="w-full h-[170px] rounded-[16px] mb-2 overflow-hidden border border-white/20">
+                    <View className="w-full h-[170px] rounded-[16px] mb-2 overflow-hidden border border-white/20 bg-white/5">
                       <Image
                         source={getDynamicImage(item.img)}
                         style={{ width: '100%', height: '100%' }}
@@ -275,7 +295,6 @@ export default function HomePage() {
                       />
                     </View>
                     
-                    {/* === CAIXA DE TÍTULO COM ALTURA FIXA (Para alinhar os preços na base) === */}
                     <View className="justify-start">
                       <Text className="font-bold text-[14px] text-white leading-tight" numberOfLines={2}>
                         {item.title}
@@ -288,11 +307,18 @@ export default function HomePage() {
                   </Pressable>
                 );
               })}
-            </ScrollView>
+            </View>
+
+            {/* Botão Ver Todos no fim */}
+            <Pressable
+              onPress={() => router.push('/destaques')}
+              className="w-full bg-white/5 border border-white/10 py-3.5 rounded-xl items-center mb-10 mt-2 active:bg-white/10"
+            >
+              <Text className="text-white font-bold text-[15px]">Ver todos os destaques</Text>
+            </Pressable>
           </>
         )}
 
-        {/* Vista de pesquisa */}
         {isSearchActive && (
           <View className="flex-1">
             <View className="flex-row items-center mb-6">
@@ -375,6 +401,57 @@ export default function HomePage() {
           </View>
         )}
       </ScrollView>
+
+      <Modal animationType="fade" transparent visible={alertState.visible} onRequestClose={closeAlert}>
+        <View className="flex-1 justify-center items-center bg-black/70 px-6">
+          <View className="bg-[rgb(48,66,77)] w-full rounded-3xl p-6 items-center shadow-2xl border border-white/10">
+            
+            <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${
+              alertState.type === 'success' ? 'bg-[#10b981]/20' : 
+              alertState.type === 'error' ? 'bg-[rgb(223,19,36)]/20' : 'bg-[#fbbf24]/20'
+            }`}>
+              <Ionicons 
+                name={
+                  alertState.type === 'success' ? 'checkmark-circle' : 
+                  alertState.type === 'error' ? 'close-circle' : 'warning'
+                } 
+                size={36} 
+                color={
+                  alertState.type === 'success' ? '#10b981' : 
+                  alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
+                } 
+              />
+            </View>
+
+            <Text className="text-white text-xl font-bold text-center mb-2">{alertState.title}</Text>
+            <Text className="text-gray-300 text-[15px] text-center leading-6 mb-8">{alertState.message}</Text>
+            
+            <View className={`w-full ${alertState.showCancel ? 'flex-row gap-3' : ''}`}>
+              {alertState.showCancel && (
+                <TouchableOpacity 
+                  onPress={closeAlert}
+                  activeOpacity={0.8}
+                  className="flex-1 bg-white/10 h-[50px] rounded-xl justify-center items-center"
+                >
+                  <Text className="text-white font-bold text-[16px]">Cancelar</Text>
+                </TouchableOpacity>
+              )}
+              
+              <TouchableOpacity 
+                onPress={handleConfirmAlert}
+                activeOpacity={0.8}
+                className={`${alertState.showCancel ? 'flex-1' : 'w-full'} bg-[rgb(223,19,36)] h-[50px] rounded-xl justify-center items-center`}
+              >
+                <Text className="text-white font-bold text-[16px]">
+                  {alertState.confirmText}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }

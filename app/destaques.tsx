@@ -2,16 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
 import { Image, InteractionManager, Modal, Pressable, ScrollView, Text, View } from 'react-native';
-import { AnuncioRow, getAllAnuncios } from '../src/services/database';
+import { AuthService } from '../src/services/auth';
+import { AnuncioRow, getDestaques } from '../src/services/database';
 
 const FILTER_OPTIONS: Record<string, string[]> = {
   'Tipo': ['Qualquer', 'Apenas Produtos', 'Apenas Serviços'],
   'Preço': ['Qualquer', 'Ordenar por mais caro', 'Ordenar por mais barato'],
 };
 
-// ==========================================
-// REDE DE SEGURANÇA (Dicionário de Imagens)
-// ==========================================
 const ImageMap: Record<string, any> = {
   'produtos/constituição_da_repu.png': require('../assets/images/constituição_da_repu.png'),
 };
@@ -38,14 +36,17 @@ export default function DestaquesScreen() {
 
       const load = async () => {
         try {
-          const items = await getAllAnuncios();
+          const user = await AuthService.getCurrentUser();
+          const userId = user?.id || null;
+
+          // Chama o Top 10 excluindo os do próprio user
+          const items = await getDestaques(userId, 10);
           if (isActive) setAllItems(items);
         } catch (error) {
           console.error("Erro ao carregar destaques:", error);
         }
       };
 
-      // Aguarda a animação de navegação terminar para proteger o SQLite
       const task = InteractionManager.runAfterInteractions(() => {
         if (isActive) load();
       });
@@ -69,20 +70,10 @@ export default function DestaquesScreen() {
     setActiveModal(null);
   };
 
-  // ==========================================
-  // MOTOR DE IMAGENS DINÂMICO
-  // ==========================================
   const getDynamicImage = (imgPath: string | null) => {
     if (!imgPath) return DEFAULT_IMAGE;
-
-    if (imgPath.startsWith('file://') || imgPath.startsWith('http')) {
-      return { uri: imgPath };
-    }
-
-    if (ImageMap[imgPath]) {
-      return ImageMap[imgPath];
-    }
-
+    if (imgPath.startsWith('file://') || imgPath.startsWith('http')) return { uri: imgPath };
+    if (ImageMap[imgPath]) return ImageMap[imgPath];
     return DEFAULT_IMAGE;
   };
 
@@ -114,30 +105,25 @@ export default function DestaquesScreen() {
 
       <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} className="flex-1 pt-6">
         {displayed.map((ad) => {
-          // Filtro para limpar os símbolos duplicados na zona dos Destaques
           const cleanPrice = ad.price ? String(ad.price).replace('€/h', '').replace('€', '').trim() : '0';
 
           return (
             <View key={`${ad.type}-${ad.id}`} className="mb-10 px-4">
               
-              {/* === IMAGEM 100% LIMPA === */}
               <Pressable
                 onPress={() => router.push({ pathname: ad.type === 'servico' ? '/servicos' : '/produtos', params: { id: ad.id } })}
                 className="w-full h-[280px] rounded-3xl overflow-hidden relative mb-4 active:opacity-90"
               >
                 <Image source={getDynamicImage(ad.img)} className="w-full h-full" resizeMode="contain" />
               </Pressable>
-              {/* ======================= */}
 
               <View className="px-2">
-                
                 <Text className="text-white text-[24px] font-extrabold shadow-sm leading-tight mb-3" numberOfLines={2}>
                   {ad.title}
                 </Text>
 
                 <View className="flex-row items-center justify-between mb-4 mt-1">
                   
-                  {/* Esquerda: Estado ou Avaliação */}
                   {ad.type === 'produto' ? (
                     <View className="bg-gray-100 px-3 py-1.5 rounded-lg shadow-sm">
                       <Text className="text-gray-800 text-[13px] font-extrabold uppercase tracking-wider">{ad.condition || '—'}</Text>
@@ -152,7 +138,6 @@ export default function DestaquesScreen() {
                     </View>
                   )}
 
-                  {/* Direita: Identificação do Vendedor */}
                   <View className="flex-row items-center bg-white/10 px-3 py-1.5 rounded-lg border border-white/10">
                     <Ionicons name="person-circle-outline" size={18} color="white" />
                     <Text className="text-gray-200 text-[14px] ml-1.5">
@@ -162,7 +147,6 @@ export default function DestaquesScreen() {
 
                 </View>
 
-                {/* Preço Limpo e Botão Ver */}
                 <View className="flex-row justify-between items-center border-t border-white/20 pt-4">
                   <Text className="text-white text-[28px] font-black">
                     {cleanPrice}€{ad.type === 'servico' && <Text className="text-[16px] font-normal text-gray-300">/h</Text>}
@@ -182,7 +166,6 @@ export default function DestaquesScreen() {
         <View className="h-10" />
       </ScrollView>
 
-      {/* Modal de Filtros */}
       <Modal visible={activeModal !== null} animationType="slide" transparent onRequestClose={() => setActiveModal(null)}>
         <Pressable className="flex-1 bg-black/60 justify-end" onPress={() => setActiveModal(null)}>
           <Pressable className="bg-white rounded-t-3xl p-6 pb-10" onPress={(e) => e.stopPropagation()}>
