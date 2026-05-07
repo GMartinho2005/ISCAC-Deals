@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import * as Haptics from 'expo-haptics';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, AppStateStatus, DeviceEventEmitter, Pressable, Text, View } from 'react-native';
 
 import { useCart } from '../../src/contexts/CartContext';
@@ -13,8 +14,9 @@ export default function TabLayout() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [salesCount, setSalesCount] = useState(0);
   
-  // 1. NOVO: Guardamos o ID do utilizador num estado próprio
   const [userId, setUserId] = useState<number | null>(null);
+  // Ref para aceder ao userId dentro dos callbacks do Realtime sem re-criar o canal
+  const userIdRef = useRef<number | null>(null);
 
   const { cartItems } = useCart(); 
   const cartCount = cartItems?.length || 0;
@@ -23,10 +25,13 @@ export default function TabLayout() {
   const [toastMessage, setToastMessage] = useState('Parabéns! O teu anúncio acabou de ser vendido.');
   const fadeAnim = useState(new Animated.Value(0))[0];
 
-  // 2. Procurar o utilizador apenas uma vez quando o ecrã carrega
+  // Procurar o utilizador apenas uma vez quando o ecrã carrega
   useEffect(() => {
     AuthService.getCurrentUser().then(user => {
-      if (user) setUserId(user.id);
+      if (user) {
+        setUserId(user.id);
+        userIdRef.current = user.id;
+      }
     });
   }, []);
 
@@ -48,6 +53,13 @@ export default function TabLayout() {
       }
     }
 
+    // Vibração haptics para notificar o vendedor
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      // Silencioso se haptics não suportado
+    }
+
     setToastMessage(customMessage);
     setToastVisible(true);
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
@@ -59,27 +71,26 @@ export default function TabLayout() {
     }, 5000);
   }, [fadeAnim]);
 
+  // fetchBadges: sincronização completa (usado APENAS na abertura e ao voltar do background)
   const fetchBadges = useCallback(async () => {
     if (!userId) return;
 
-    // Buscar Mensagens não lidas
     const conversas = await getMinhasConversas(userId);
     const total = conversas.reduce((acc, c) => acc + c.nao_lidas, 0);
     setUnreadCount(total);
 
-    // Buscar Vendas não lidas
     const { data } = await supabase.from('core_compras').select('id').eq('id_vendedor', userId).eq('notificacao_lida', 0);
     setSalesCount(data?.length || 0);
   }, [userId]); 
 
-  // 3. Ouvintes de Estado e App (Isolados do Supabase)
+  // Sincronização inicial + ao voltar do background
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') fetchBadges();
     };
     const appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
 
-    const subscription = DeviceEventEmitter.addListener('updateBadges', () => {
+    const badgeSub = DeviceEventEmitter.addListener('updateBadges', () => {
       fetchBadges();
     });
 
@@ -87,42 +98,77 @@ export default function TabLayout() {
 
     return () => {
       appStateSubscription.remove();
-      subscription.remove();
+      badgeSub.remove();
     };
   }, [fetchBadges]);
 
-  // 4. OUVINTE SUPABASE (Síncrono e Seguro)
+  // OUVINTE SUPABASE REALTIME — Atualização INSTANTÂNEA dos badges
+  // Os contadores são incrementados diretamente a partir do payload, sem queries extra
   useEffect(() => {
-    // Só arranca se já tivermos o ID do utilizador pronto
     if (!userId) return;
 
-    // Criamos um nome 100% único usando a data. O Supabase trata disto na perfeição sem CHANNEL_ERROR.
     const channelName = `badges-${userId}-${Date.now()}`;
     const myAppChannel = supabase.channel(channelName);
 
     myAppChannel
+      // ─── MENSAGENS: incrementa/decrementa instantaneamente ───
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'core_mensagem' },
-        () => { fetchBadges(); }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'core_compras', filter: `id_vendedor=eq.${userId}` },
+        { event: 'INSERT', schema: 'public', table: 'core_mensagem' },
         (payload: any) => {
-          fetchBadges();
-          if (payload.eventType === 'INSERT') {
-            showSaleToast(payload.new);
+          const msg = payload.new;
+          // Se a mensagem NÃO é do utilizador atual → é uma mensagem recebida → +1 badge
+          if (msg && msg.id_remetente !== userIdRef.current) {
+            setUnreadCount(prev => prev + 1);
           }
         }
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'core_mensagem' },
+        (payload: any) => {
+          const msg = payload.new;
+          const old = payload.old;
+          // Se a mensagem foi marcada como lida (lida: false → true) e não é do utilizador
+          if (msg && old && !old.lida && msg.lida && msg.id_remetente !== userIdRef.current) {
+            setUnreadCount(prev => Math.max(0, prev - 1));
+          }
+        }
+      )
+      // ─── VENDAS: incrementa instantaneamente + toast ───
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'core_compras' },
+        (payload: any) => {
+          const newRow = payload.new;
+          if (newRow && newRow.id_vendedor === userIdRef.current) {
+            // +1 badge instantâneo
+            setSalesCount(prev => prev + 1);
+            // Toast + vibração
+            showSaleToast(newRow);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'core_compras' },
+        (payload: any) => {
+          const newRow = payload.new;
+          const oldRow = payload.old;
+          // Se a notificação foi marcada como lida (0 → 1)
+          if (newRow && oldRow && oldRow.notificacao_lida === 0 && newRow.notificacao_lida === 1 && newRow.id_vendedor === userIdRef.current) {
+            setSalesCount(prev => Math.max(0, prev - 1));
+          }
+        }
+      )
+      .subscribe((status: string) => {
+        console.log(`[Realtime] Canal ${channelName}: ${status}`);
+      });
 
     return () => {
-      // Limpeza natural recomendada pela documentação oficial
       supabase.removeChannel(myAppChannel);
     };
-  }, [userId, fetchBadges, showSaleToast]);
+  }, [userId, showSaleToast]);
 
   const handleToastPress = () => {
     setToastVisible(false);

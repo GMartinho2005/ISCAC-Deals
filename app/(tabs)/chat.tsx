@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
 import { AuthService } from '../../src/services/auth';
@@ -8,12 +8,18 @@ import { ConversaRow, getMinhasConversas } from '../../src/services/database';
 
 export default function ChatScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
   const [conversas, setConversas] = useState<ConversaRow[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('Todas');
 
   useFocusEffect(
     useCallback(() => {
+      // Reset do ecrã ao entrar
+      setSearchQuery('');
+      setActiveFilter('Todas');
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+
       const load = async () => {
         const user = await AuthService.getCurrentUser();
         if (!user) return;
@@ -75,7 +81,7 @@ export default function ChatScreen() {
         <Text className="text-3xl font-extrabold text-white">Mensagens</Text>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} className="flex-1">
 
         {/* Barra de pesquisa */}
         <View className="px-5 mt-6 mb-5">

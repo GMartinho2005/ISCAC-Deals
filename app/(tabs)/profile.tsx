@@ -5,6 +5,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { DeviceEventEmitter, Image, InteractionManager, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import { AuthService } from '../../src/services/auth';
+import { BiometricService } from '../../src/services/biometrics';
 import {
   AnuncioRow, CompraRow, Curso, changePassword,
   enviarTicketSuporte,
@@ -47,6 +48,7 @@ export default function ProfileScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
   
   const isPickingImage = useRef(false);
+  const comprasScrollRef = useRef<ScrollView>(null);
 
   const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [myAds, setMyAds] = useState<AnuncioRow[]>([]);
@@ -98,6 +100,11 @@ export default function ProfileScreen() {
 
   const [photoSelectionModalVisible, setPhotoSelectionModalVisible] = useState(false);
 
+  // Estados da Impressão Digital
+  const [biometricHardwareAvailable, setBiometricHardwareAvailable] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricToggling, setBiometricToggling] = useState(false);
+
   const showAlert = (title: string, message: string, type: 'warning' | 'success' | 'error', showCancel = false, confirmText = 'Entendido', onConfirm: (() => void) | null = null, showCloseIcon = false) => {
     setAlertState({ visible: true, title, message, type, showCancel, confirmText, onConfirm, showCloseIcon });
   };
@@ -118,6 +125,7 @@ export default function ProfileScreen() {
 
       let isActive = true;
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+      comprasScrollRef.current?.scrollTo({ x: 0, animated: false });
 
       const loadAll = async () => {
         try {
@@ -144,6 +152,12 @@ export default function ProfileScreen() {
           setCompras(purchased || []);
           setVendas(minhasVendas || []);
           setCursos(listaCursos || []);
+
+          // Verificar estado biométrico
+          const bioHw = await BiometricService.isAvailable();
+          setBiometricHardwareAvailable(bioHw);
+          const bioOn = await BiometricService.isEnabled();
+          setBiometricEnabled(bioOn);
         } catch (error) {
           console.error("Erro ao carregar perfil:", error);
         }
@@ -309,8 +323,56 @@ export default function ProfileScreen() {
 
   const handleLogout = async () => {
     await AuthService.logout();
+    // NÃO limpamos credenciais biométricas no logout
+    // para que na próxima vez o utilizador possa usar impressão digital
     setLogoutModalVisible(false);
     router.replace('/');
+  };
+
+  const handleToggleBiometric = async () => {
+    if (biometricToggling) return;
+    setBiometricToggling(true);
+
+    try {
+      if (biometricEnabled) {
+        // Desativar
+        await BiometricService.disable();
+        setBiometricEnabled(false);
+        showAlert('Desativado', 'A impressão digital foi desativada. Terás de usar email e password.', 'success');
+      } else {
+        // Ativar — precisa verificar se o dispositivo suporta
+        const available = await BiometricService.isAvailable();
+        if (!available) {
+          showAlert('Indisponível', 'O teu dispositivo não tem impressão digital configurada.', 'warning');
+          return;
+        }
+
+        // Pedir autenticação para confirmar identidade
+        const authenticated = await BiometricService.authenticate();
+        if (!authenticated) {
+          showAlert('Cancelado', 'Autenticação biométrica cancelada.', 'warning');
+          return;
+        }
+
+        // Precisamos das credenciais para guardar — buscar a password atual
+        if (!currentUser) return;
+        const passwordAtual = await getPasswordAtual(currentUser.id);
+        if (!passwordAtual) {
+          showAlert('Erro', 'Não foi possível obter as credenciais.', 'error');
+          return;
+        }
+
+        const success = await BiometricService.enable(currentUser.email, passwordAtual);
+        if (success) {
+          setBiometricEnabled(true);
+          showAlert('Ativado!', 'Agora podes usar a tua impressão digital para iniciar sessão rapidamente.', 'success');
+        } else {
+          showAlert('Erro', 'Não foi possível ativar a impressão digital.', 'error');
+        }
+      }
+    } finally {
+      setBiometricToggling(false);
+    }
   };
 
   const handleClosePasswordModal = () => {
@@ -538,7 +600,7 @@ export default function ProfileScreen() {
               </Text>
             </View>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <ScrollView ref={comprasScrollRef} horizontal showsHorizontalScrollIndicator={false}>
               {compras.map((item, index) => (
                 <Pressable 
                   key={`compra-${item.id_compra}-${item.itemId}-${index}`}
@@ -585,6 +647,28 @@ export default function ProfileScreen() {
         <View className="bg-white/5 border border-white/10 rounded-3xl mb-10 overflow-hidden">
           <ProfileMenuOption icon="person-outline" title="Editar Perfil" onPress={openEditProfile} />
           <ProfileMenuOption icon="key-outline" title="Alterar Password" onPress={() => setPasswordModalVisible(true)} />
+          
+          {/* IMPRESSÃO DIGITAL */}
+          {biometricHardwareAvailable && (
+            <Pressable
+              onPress={handleToggleBiometric}
+              className="flex-row items-center px-5 py-4 border-b border-white/5 active:bg-white/5"
+            >
+              <View className={`w-9 h-9 rounded-full items-center justify-center mr-4 ${biometricEnabled ? 'bg-[#10b981]/20' : 'bg-white/10'}`}>
+                <Ionicons name="finger-print" size={20} color={biometricEnabled ? '#10b981' : 'rgba(255,255,255,0.6)'} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-white font-semibold text-[15px]">Impressão Digital</Text>
+                <Text className="text-gray-400 text-[11px] mt-0.5">
+                  {biometricEnabled ? 'Ativada — Login rápido com biometria' : 'Desativada'}
+                </Text>
+              </View>
+              <View className={`w-12 h-7 rounded-full justify-center px-0.5 ${biometricEnabled ? 'bg-[#10b981]' : 'bg-white/15'}`}>
+                <View className={`w-6 h-6 bg-white rounded-full shadow ${biometricEnabled ? 'self-end' : 'self-start'}`} />
+              </View>
+            </Pressable>
+          )}
+
           <ProfileMenuOption icon="help-circle-outline" title="Suporte" onPress={handleOpenSupportMenu} />
           <ProfileMenuOption icon="log-out-outline" title="Terminar Sessão" onPress={() => setLogoutModalVisible(true)} isDanger={true} />
         </View>

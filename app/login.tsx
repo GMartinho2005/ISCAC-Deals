@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import SuporteTicketList from '../components/SuporteTicketList';
 import { AuthService } from '../src/services/auth';
+import { BiometricService } from '../src/services/biometrics';
 import { enviarTicketSuporte } from '../src/services/database';
 import { supabase } from '../src/services/supabase';
 
@@ -15,6 +16,10 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Estados da Impressão Digital
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricPulse] = useState(new Animated.Value(1));
 
   // NOVO: Guarda o email APENAS se a password estiver certa mas a conta estiver Inativa/Restringida
   const [verifiedRestrictedEmail, setVerifiedRestrictedEmail] = useState<string | null>(null);
@@ -73,6 +78,53 @@ export default function LoginScreen() {
     if (onConfirm) onConfirm();
   };
 
+  // ─── VERIFICAR IMPRESSÃO DIGITAL AO ABRIR O ECRÃ ───
+  useEffect(() => {
+    const checkBiometric = async () => {
+      const available = await BiometricService.isAvailable();
+      const enabled = await BiometricService.isEnabled();
+      setBiometricAvailable(available && enabled);
+
+      // Se biometria está ativada, tentar login automático
+      if (available && enabled) {
+        // Animação de pulso no ícone
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(biometricPulse, { toValue: 1.15, duration: 800, useNativeDriver: true }),
+            Animated.timing(biometricPulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+          ])
+        ).start();
+
+        handleBiometricLogin();
+      }
+    };
+    checkBiometric();
+  }, []);
+
+  const handleBiometricLogin = async () => {
+    try {
+      const credentials = await BiometricService.getStoredCredentials();
+      if (!credentials) return;
+
+      const authenticated = await BiometricService.authenticate();
+      if (!authenticated) return;
+
+      const result = await AuthService.login(credentials.email, credentials.password);
+      if (result.user) {
+        router.replace('/home');
+      } else if (result.error === "RESTRICTED") {
+        showAlert("Conta Restringida", "A tua conta encontra-se inativa.", "error");
+      } else {
+        // Credenciais guardadas já não são válidas — desativar biometria
+        await BiometricService.disable();
+        setBiometricAvailable(false);
+        showAlert("Sessão Expirada", "As tuas credenciais mudaram. Inicia sessão manualmente.", "warning");
+      }
+    } catch (error) {
+      console.error("Erro biométrico:", error);
+    }
+  };
+
   const handleLogin = async () => {
     if (!email.trim() && !password.trim()) {
       showAlert("Atenção", "Preenchimento obrigatório: Email e Password.", "warning");
@@ -91,6 +143,12 @@ export default function LoginScreen() {
       const result = await AuthService.login(email.trim().toLowerCase(), password);
       
       if (result.user) {
+        // Guardar credenciais se biometria estiver disponível e ativada
+        const bioEnabled = await BiometricService.isEnabled();
+        const bioAvailable = await BiometricService.isAvailable();
+        if (bioEnabled && bioAvailable) {
+          await BiometricService.enable(email.trim().toLowerCase(), password);
+        }
         // Login com sucesso
         router.replace('/home');
       } else if (result.error === "RESTRICTED") {
@@ -280,14 +338,28 @@ export default function LoginScreen() {
         </View>
 
         {/* Botão Entrar */}
-        <TouchableOpacity
-          onPress={handleLogin}
-          activeOpacity={0.85}
-          className="bg-[rgb(223,19,36)] h-[54px] rounded-[14px] justify-center items-center mt-8 flex-row gap-x-2 shadow-lg"
-        >
-          <Ionicons name="key-outline" size={20} color="white" />
-          <Text className="text-white font-bold text-base tracking-widest ml-1">ENTRAR</Text>
-        </TouchableOpacity>
+        <View className="flex-row items-center mt-8 gap-x-3">
+          <TouchableOpacity
+            onPress={handleLogin}
+            activeOpacity={0.85}
+            className={`bg-[rgb(223,19,36)] h-[54px] rounded-[14px] justify-center items-center flex-row gap-x-2 shadow-lg ${biometricAvailable ? 'flex-1' : 'flex-1'}`}
+          >
+            <Ionicons name="key-outline" size={20} color="white" />
+            <Text className="text-white font-bold text-base tracking-widest ml-1">ENTRAR</Text>
+          </TouchableOpacity>
+
+          {biometricAvailable && (
+            <Animated.View style={{ transform: [{ scale: biometricPulse }] }}>
+              <TouchableOpacity
+                onPress={handleBiometricLogin}
+                activeOpacity={0.7}
+                className="bg-white/10 border border-white/20 h-[54px] w-[54px] rounded-[14px] justify-center items-center"
+              >
+                <Ionicons name="finger-print" size={28} color="white" />
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </View>
 
         {/* Link Registo */}
         <TouchableOpacity onPress={() => router.push('/register')} className="mt-8 items-center">

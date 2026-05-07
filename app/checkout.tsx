@@ -14,7 +14,7 @@ const DEFAULT_IMAGE = require('../assets/images/logo.png');
 export default function CheckoutScreen() {
   const router = useRouter();
   const { cartItems, clearCart } = useCart();
-  
+
   const params = useLocalSearchParams();
   const quantities = params.quantities ? JSON.parse(params.quantities as string) : {};
   const selectedSlots = params.selectedSlots ? JSON.parse(params.selectedSlots as string) : {};
@@ -22,7 +22,7 @@ export default function CheckoutScreen() {
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [orderComplete, setOrderComplete] = useState(false);
-  
+
   // Guardar uma "fotografia" dos itens comprados para o ecrã de sucesso não ficar vazio ao limpar o carrinho
   const [purchasedItems, setPurchasedItems] = useState<CartItem[]>([]);
 
@@ -79,12 +79,12 @@ export default function CheckoutScreen() {
 
     try {
       await processarCompra(user.id, cartItems, selectedSlots);
-      
+
       // Guarda os itens na memória do ecrã e limpa imediatamente o carrinho real
       setPurchasedItems([...cartItems]);
       clearCart();
       setOrderComplete(true);
-      
+
     } catch (error) {
       console.error("Erro ao processar compra: ", error);
       showAlert("Erro", "Ocorreu um erro ao processar a compra.", "error");
@@ -95,7 +95,7 @@ export default function CheckoutScreen() {
     const user = await AuthService.getCurrentUser();
     if (!user) return;
 
-    if(item.sellerId) {
+    if (item.sellerId) {
       const conversaId = await getOuCriarConversa(user.id, item.sellerId, item.id, item.type === 'servico');
       if (conversaId) {
         router.push({
@@ -104,7 +104,7 @@ export default function CheckoutScreen() {
         });
       }
     } else {
-        showAlert("Aviso", "Por favor, vai aos detalhes do produto para contactar o vendedor.", "warning");
+      showAlert("Aviso", "Por favor, vai aos detalhes do produto para contactar o vendedor.", "warning");
     }
   };
 
@@ -122,7 +122,7 @@ export default function CheckoutScreen() {
         <Text className="text-gray-300 text-center text-[16px] mb-8 leading-6">
           O teu pedido foi recebido. Entra em contacto com os vendedores para combinar a entrega!
         </Text>
-        
+
         <ScrollView className="w-full mb-6" showsVerticalScrollIndicator={false}>
           {purchasedItems.map((item, index) => (
             <View key={index} className="bg-white/10 rounded-xl p-4 mb-3 flex-row items-center justify-between border border-white/10">
@@ -130,7 +130,7 @@ export default function CheckoutScreen() {
                 <Text className="text-white font-bold" numberOfLines={2}>{item.title}</Text>
                 <Text className="text-gray-400 text-[12px] mt-1 font-medium uppercase">{item.vendedor}</Text>
               </View>
-              <Pressable 
+              <Pressable
                 onPress={() => handleContactarVendedor(item)}
                 className="bg-[rgb(223,19,36)] px-4 py-2.5 rounded-lg flex-row items-center active:opacity-70"
               >
@@ -149,27 +149,26 @@ export default function CheckoutScreen() {
         <Modal animationType="fade" transparent visible={alertState.visible} onRequestClose={closeAlert}>
           <View className="flex-1 justify-center items-center bg-black/70 px-6">
             <View className="bg-[rgb(48,66,77)] w-full rounded-3xl p-6 items-center shadow-2xl border border-white/10">
-              <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${
-                alertState.type === 'success' ? 'bg-[#10b981]/20' : 
+              <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${alertState.type === 'success' ? 'bg-[#10b981]/20' :
                 alertState.type === 'error' ? 'bg-[rgb(223,19,36)]/20' : 'bg-[#fbbf24]/20'
-              }`}>
-                <Ionicons 
+                }`}>
+                <Ionicons
                   name={
-                    alertState.type === 'success' ? 'checkmark-circle' : 
-                    alertState.type === 'error' ? 'close-circle' : 'warning'
-                  } 
-                  size={36} 
+                    alertState.type === 'success' ? 'checkmark-circle' :
+                      alertState.type === 'error' ? 'close-circle' : 'warning'
+                  }
+                  size={36}
                   color={
-                    alertState.type === 'success' ? '#10b981' : 
-                    alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
-                  } 
+                    alertState.type === 'success' ? '#10b981' :
+                      alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
+                  }
                 />
               </View>
 
               <Text className="text-white text-xl font-bold text-center mb-2">{alertState.title}</Text>
               <Text className="text-gray-300 text-[15px] text-center leading-6 mb-8">{alertState.message}</Text>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 onPress={handleConfirmAlert}
                 activeOpacity={0.8}
                 className="bg-[rgb(223,19,36)] w-full h-[50px] rounded-xl justify-center items-center"
@@ -185,7 +184,7 @@ export default function CheckoutScreen() {
 
   return (
     <View className="flex-1 bg-[rgb(58,79,92)]">
-      
+
       <View className="pt-14 pb-4 px-4 flex-row items-center border-b border-white/10 ">
         <Pressable onPress={() => router.back()} className="p-2 -ml-2 active:opacity-70">
           <Ionicons name="arrow-back" size={26} color="white" />
@@ -196,7 +195,7 @@ export default function CheckoutScreen() {
       <ScrollView showsVerticalScrollIndicator={false} className="flex-1 pt-6 px-5">
 
         <Text className="text-gray-400 text-[11px] font-extrabold uppercase tracking-widest mb-3 ml-1">Pagamento</Text>
-        <Pressable 
+        <Pressable
           onPress={() => setShowPaymentModal(true)}
           className="bg-white/5 border border-white/10 rounded-2xl p-4 flex-row items-center justify-between mb-10 active:bg-white/10"
         >
@@ -224,7 +223,7 @@ export default function CheckoutScreen() {
             const isServico = item.type === 'servico';
 
             return (
-              <View 
+              <View
                 key={`checkout-${item.id}-${index}`}
                 className={`flex-row items-center py-3 px-2 ${index !== cartItems.length - 1 ? 'border-b border-white/5' : ''}`}
               >
@@ -249,7 +248,7 @@ export default function CheckoutScreen() {
           <Text className="text-gray-300 font-medium text-[16px]">Total</Text>
           <Text className="text-white font-black text-[26px]">{total.toFixed(2)}€</Text>
         </View>
-        <Pressable 
+        <Pressable
           onPress={handleFazerPedido}
           className="w-full bg-black py-4 rounded-xl items-center flex-row justify-center active:bg-gray-800 shadow-xl border border-white/10"
         >
@@ -275,27 +274,26 @@ export default function CheckoutScreen() {
       <Modal animationType="fade" transparent visible={alertState.visible && !orderComplete} onRequestClose={closeAlert}>
         <View className="flex-1 justify-center items-center bg-black/70 px-6">
           <View className="bg-[rgb(48,66,77)] w-full rounded-3xl p-6 items-center shadow-2xl border border-white/10">
-            <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${
-              alertState.type === 'success' ? 'bg-[#10b981]/20' : 
+            <View className={`w-16 h-16 rounded-full items-center justify-center mb-4 ${alertState.type === 'success' ? 'bg-[#10b981]/20' :
               alertState.type === 'error' ? 'bg-[rgb(223,19,36)]/20' : 'bg-[#fbbf24]/20'
-            }`}>
-              <Ionicons 
+              }`}>
+              <Ionicons
                 name={
-                  alertState.type === 'success' ? 'checkmark-circle' : 
-                  alertState.type === 'error' ? 'close-circle' : 'warning'
-                } 
-                size={36} 
+                  alertState.type === 'success' ? 'checkmark-circle' :
+                    alertState.type === 'error' ? 'close-circle' : 'warning'
+                }
+                size={36}
                 color={
-                  alertState.type === 'success' ? '#10b981' : 
-                  alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
-                } 
+                  alertState.type === 'success' ? '#10b981' :
+                    alertState.type === 'error' ? 'rgb(223,19,36)' : '#fbbf24'
+                }
               />
             </View>
 
             <Text className="text-white text-xl font-bold text-center mb-2">{alertState.title}</Text>
             <Text className="text-gray-300 text-[15px] text-center leading-6 mb-8">{alertState.message}</Text>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               onPress={handleConfirmAlert}
               activeOpacity={0.8}
               className="bg-[rgb(223,19,36)] w-full h-[50px] rounded-xl justify-center items-center"

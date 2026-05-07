@@ -6,6 +6,7 @@ import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 
 // Importamos o serviço de autenticação
 import { AuthService } from '../src/services/auth';
+import { BiometricService } from '../src/services/biometrics';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -20,7 +21,17 @@ export default function HomeScreen() {
       const user = await AuthService.getCurrentUser();
 
       if (user && isMounted) {
-        // Se encontrou o utilizador, salta o ecrã de boas-vindas e vai direto para a app!
+        // Verificar se biometria está ativada
+        const bioEnabled = await BiometricService.isEnabled();
+        const bioAvailable = await BiometricService.isAvailable();
+
+        if (bioEnabled && bioAvailable) {
+          // Se tem biometria, redireciona para login (onde a biometria será pedida)
+          router.replace('/login');
+          return;
+        }
+
+        // Se não tem biometria, entra diretamente como antes
         router.replace('/home');
         return; 
       }
